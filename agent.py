@@ -569,6 +569,10 @@ After the marker, briefly list the checks and their results.
 
             verification_result = content.strip()
 
+            print("\n--- VERIFIER RAW RESPONSE ---")
+            print(repr(content))
+            print("--- END VERIFIER RESPONSE ---\n")
+
             if verification_result.startswith(
                 "STUDYFLOW_VERIFICATION: FAILED"
             ):
@@ -657,7 +661,7 @@ def main():
     parser.add_argument("--assignment-file")
     parser.add_argument("--assignment")
     parser.add_argument("--repo-url", required=True)
-    parser.add_argument("--branch", required=True)
+    parser.add_argument("--branch", default="")
     parser.add_argument("--commit-message", required=True)
 
     args = parser.parse_args()
@@ -686,19 +690,41 @@ def main():
     set_workspace(repo_path)
 
     emit_stage("prepare")
-    branch_mode = os.environ.get("STUDYFLOW_BRANCH_MODE", "named")
-
-    if branch_mode not in ("current", "named"):
-        raise ValueError("Invalid StudyFlow branch mode.")
-    if os.environ.get("STUDYFLOW_PUSH_TARGET") != args.branch:
-        raise RuntimeError(
-            "The configured GitHub push target does not match the requested branch."
-        )
-
+    
+    requested_branch = args.branch.strip()
+    
+    branch_mode = "named" if requested_branch else "current"
+    
     if os.environ.get("STUDYFLOW_REQUIRE_CLEAN_TREE") != "true":
-        raise RuntimeError("StudyFlow clean-tree safety check is not enabled.")
-
-    actual_branch = git_prepare_branch(args.branch, branch_mode)
+        raise RuntimeError(
+            "StudyFlow clean-tree safety check is not enabled."
+        )
+    
+    configured_target = os.environ.get(
+        "STUDYFLOW_PUSH_TARGET",
+        "",
+    ).strip()
+    
+    if requested_branch and configured_target != requested_branch:
+        raise RuntimeError(
+            "The configured GitHub push target does not match "
+            "the requested branch."
+        )
+    
+    actual_branch = git_prepare_branch(
+        requested_branch,
+        branch_mode,
+    )
+    
+    if configured_target and configured_target != actual_branch:
+        raise RuntimeError(
+            "The configured GitHub push target does not match "
+            "the actual target branch."
+        )
+    
+    os.environ["STUDYFLOW_PUSH_TARGET"] = actual_branch
+    
+    args.branch = actual_branch
 
     if actual_branch != args.branch:
         raise RuntimeError(

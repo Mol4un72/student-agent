@@ -325,31 +325,13 @@ def get_remote_branch_sha(branch: str) -> Optional[str]:
         None,
     )
 
-
 def git_prepare_branch(
     branch: str,
     branch_mode: str,
 ) -> str:
     branch = branch.strip()
 
-    if not branch:
-        raise ValueError(
-            "The target branch name cannot be empty."
-        )
-
     workspace = get_workspace()
-
-    check = subprocess.run(
-        ["git", "check-ref-format", "--branch", branch],
-        cwd=workspace,
-        capture_output=True,
-        text=True,
-    )
-
-    if check.returncode != 0:
-        raise ValueError(
-            "The target branch name is invalid for Git."
-        )
 
     status = subprocess.run(
         ["git", "status", "--porcelain"],
@@ -360,16 +342,23 @@ def git_prepare_branch(
 
     if status.returncode != 0:
         raise RuntimeError(
-            "Could not inspect the repository working tree before branch operations."
+            "Could not inspect the repository working tree."
         )
 
     if status.stdout.strip():
         raise RuntimeError(
-            "The repository has uncommitted changes. Branch operation stopped without changing them."
+            "The repository has uncommitted changes. "
+            "Branch operation stopped without changing them."
         )
 
     current = subprocess.run(
-        ["git", "symbolic-ref", "--quiet", "--short", "HEAD"],
+        [
+            "git",
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "HEAD",
+        ],
         cwd=workspace,
         capture_output=True,
         text=True,
@@ -377,150 +366,136 @@ def git_prepare_branch(
 
     if current.returncode != 0 or not current.stdout.strip():
         raise RuntimeError(
-            "Could not determine the repository's current branch. No branch was changed."
+            "Could not determine the current Git branch."
         )
 
     current_branch = current.stdout.strip()
 
     if branch_mode == "current":
-        remote_target_sha = get_remote_branch_sha(branch)
-        if remote_target_sha is None:
+        remote_sha = get_remote_branch_sha(current_branch)
+
+        if remote_sha is None:
             raise RuntimeError(
-                f"Поточна гілка «{branch}» недоступна в GitHub."
+                f"The current branch '{current_branch}' "
+                "does not exist on GitHub."
             )
-        if current_branch != branch:
-            raise RuntimeError(
-                "The cloned repository's current branch does not match the selected repository branch. "
-                "No branch switch was attempted."
-            )
+
         local_sha = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=workspace,
             capture_output=True,
             text=True,
         )
+
         if (
             local_sha.returncode != 0
-            or local_sha.stdout.strip() != remote_target_sha
+            or local_sha.stdout.strip() != remote_sha
         ):
             raise RuntimeError(
-                "The cloned repository's current branch is behind or differs from GitHub. "
+                "The current branch differs from GitHub. "
                 "No branch or existing commit was changed."
             )
+
         return current_branch
 
     if branch_mode != "named":
         raise ValueError("Unknown branch mode.")
 
-    remote_target_sha = get_remote_branch_sha(branch)
+    if not branch:
+        raise ValueError("The new branch name cannot be empty.")
 
-    if remote_target_sha is None:
-        raise RuntimeError(
-            f"Цільову гілку «{branch}» не знайдено в GitHub. "
-            "Можливо, її видалили після перевірки або створення."
-        )
-
-    local_ref = subprocess.run(
-        ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
-        cwd=workspace,
-        capture_output=True,
-        text=True,
-    )
-
-    fetch = subprocess.run(
+    check = subprocess.run(
         [
             "git",
-            "fetch",
-            "--no-tags",
-            "origin",
-            f"refs/heads/{branch}:refs/remotes/origin/{branch}",
+            "check-ref-format",
+            "--branch",
+            branch,
         ],
         cwd=workspace,
         capture_output=True,
         text=True,
-        env=get_git_auth_env(),
-        timeout=60,
     )
-    if fetch.returncode != 0:
-        raise RuntimeError(
-            f"Не вдалося безпечно отримати цільову гілку «{branch}». "
-            "Жодну наявну гілку не змінено."
+
+    if check.returncode != 0:
+        raise ValueError(
+            "The target branch name is invalid for Git."
         )
+
+    local_ref = subprocess.run(
+        [
+            "git",
+            "show-ref",
+            "--verify",
+            "--quiet",
+            f"refs/heads/{branch}",
+        ],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+    )
 
     if local_ref.returncode == 0:
-        local_sha = subprocess.run(
-            ["git", "rev-parse", f"refs/heads/{branch}"],
-            cwd=workspace,
-            capture_output=True,
-            text=True,
-        )
-        remote_sha = subprocess.run(
-            ["git", "rev-parse", f"refs/remotes/origin/{branch}"],
-            cwd=workspace,
-            capture_output=True,
-            text=True,
+        raise RuntimeError(
+            f"The local branch '{branch}' already exists. "
+            "Choose another branch name."
         )
 
-        if (
-            local_sha.returncode != 0
-            or remote_sha.returncode != 0
-            or local_sha.stdout.strip() != remote_sha.stdout.strip()
-        ):
-            raise RuntimeError(
-                f"Local and GitHub commits for branch '{branch}' differ. "
-                "No local commits were discarded or overwritten."
-            )
+    if local_ref.returncode not in (0, 1):
+        raise RuntimeError(
+            "Could not verify the local branch state."
+        )
 
-        result = subprocess.run(
-            ["git", "checkout", branch],
-            cwd=workspace,
-            capture_output=True,
-            text=True,
+    remote_sha = get_remote_branch_sha(branch)
+
+    if remote_sha is not None:
+        raise RuntimeError(
+            f"The GitHub branch '{branch}' already exists. "
+            "Choose another branch name."
         )
-    else:
-        result = subprocess.run(
-            [
-                "git",
-                "checkout",
-                "--track",
-                "-b",
-                branch,
-                f"origin/{branch}",
-            ],
-            cwd=workspace,
-            capture_output=True,
-            text=True,
-        )
+
+    result = subprocess.run(
+        [
+            "git",
+            "checkout",
+            "-b",
+            branch,
+        ],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+    )
 
     if result.returncode != 0:
+        output = (
+            result.stdout + "\n" + result.stderr
+        ).strip()
+
         raise RuntimeError(
-            f"Could not switch safely to existing target branch '{branch}'."
+            f"Could not create branch '{branch}':\n{output}"
         )
 
     checked_out = subprocess.run(
         [
             "git",
-            "rev-parse",
+            "symbolic-ref",
+            "--quiet",
+            "--short",
             "HEAD",
-            f"refs/remotes/origin/{branch}",
         ],
         cwd=workspace,
         capture_output=True,
         text=True,
     )
 
-    checked_out_shas = checked_out.stdout.splitlines()
     if (
         checked_out.returncode != 0
-        or len(checked_out_shas) != 2
-        or checked_out_shas[0] != checked_out_shas[1]
+        or checked_out.stdout.strip() != branch
     ):
         raise RuntimeError(
-            "Git did not confirm the checked-out target branch matches GitHub."
+            "Git did not confirm the newly created branch."
         )
 
     return branch
-
 
 # --------------------------------------------------
 # File access
