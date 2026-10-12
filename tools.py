@@ -847,6 +847,26 @@ def git_commit(message: str) -> str:
             "They remain local and were not committed or pushed."
         )
 
+    # Configure identity locally for this repository only.
+    identity_settings = [
+        ("user.name", "StudyFlow Agent"),
+        ("user.email", "studyflow-agent@users.noreply.github.com"),
+    ]
+
+    for key, value in identity_settings:
+        identity_result = subprocess.run(
+            ["git", "config", "--local", key, value],
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+        )
+
+        if identity_result.returncode != 0:
+            raise RuntimeError(
+                f"Failed to configure local Git setting {key}: "
+                f"{identity_result.stderr.strip()}"
+            )
+
     result = subprocess.run(
         ["git", "commit", "-m", message],
         cwd=workspace,
