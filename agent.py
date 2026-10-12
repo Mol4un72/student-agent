@@ -329,6 +329,7 @@ def run_agent(
     assignment: str,
     tasks_folder: str,
     generate_report: bool,
+    student_profile: dict[str, str],
 ):
     skills = load_skills()
     folder_instructions = (
@@ -409,10 +410,25 @@ COMMENTS:
 
 STUDENT DATA:
 
-Use only the profile data explicitly included in the assignment by StudyFlow.
+Use only the profile data explicitly supplied by StudyFlow.
 Never invent, assume, or reuse personal or student data from another task.
 Do not include profile data in source comments, commit messages, or logs unless
 the assignment explicitly requires it in the resulting application.
+
+STUDENT PROFILE:
+
+First name: {student_profile["first_name"] or "не вказано"}
+Last name: {student_profile["last_name"] or "не вказано"}
+Student group: {student_profile["student_group"] or "не вказано"}
+
+REPORT REQUIREMENTS:
+
+- For programming practical reports, the first line must follow this format:
+  Практична №{{номер}} | {{Прізвище}} {{Ім'я}} | {{Група}} | Програмування
+- Determine the practical number from the assignment if it is provided.
+- Never invent missing personal information or a practical number.
+- Use "не вказано" for missing profile fields.
+- Follow the user's report template when one is supplied.
 
 IMPLEMENTATION:
 
@@ -666,6 +682,18 @@ def main():
 
     args = parser.parse_args()
 
+    student_profile = {
+        "first_name": os.environ.get(
+            "STUDYFLOW_STUDENT_FIRST_NAME", ""
+        ).strip(),
+        "last_name": os.environ.get(
+            "STUDYFLOW_STUDENT_LAST_NAME", ""
+        ).strip(),
+        "student_group": os.environ.get(
+            "STUDYFLOW_STUDENT_GROUP", ""
+        ).strip(),
+    }
+
     if args.assignment is None and args.assignment_file is None:
         parser.error(
             "Provide either --assignment or --assignment-file."
@@ -692,8 +720,14 @@ def main():
     emit_stage("prepare")
     
     requested_branch = args.branch.strip()
+
+    branch_mode = os.environ.get(
+        "STUDYFLOW_BRANCH_MODE",
+        "",
+    ).strip()
     
-    branch_mode = "named" if requested_branch else "current"
+    if branch_mode not in {"named", "current"}:
+        branch_mode = "named" if requested_branch else "current"
     
     if os.environ.get("STUDYFLOW_REQUIRE_CLEAN_TREE") != "true":
         raise RuntimeError(
@@ -823,6 +857,7 @@ def main():
             assignment,
             tasks_folder,
             generate_report,
+            student_profile,
         )
     except Exception:
         if generate_report_requested:
